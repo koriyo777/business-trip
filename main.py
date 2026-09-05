@@ -548,7 +548,7 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         sheet.cell(total_row, column).border = border
         sheet.cell(total_row, column).alignment = center
         sheet.cell(total_row, column).font = Font(bold=True)
-    sheet.freeze_panes = "B7"
+    sheet.freeze_panes = "F7"
     widths = {"B": 16, "C": 12, "D": 12, "E": 10, "F": 4, "G": 4, "H": 4, "I": 4, "J": 4, "K": 4, "L": 4, "M": 12, "N": 4, "O": 12, "P": 14, "Q": 4, "R": 4, "S": 4, "T": 14, "U": 4, "V": 14, "W": 16, "X": 24, "Y": 12}
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
