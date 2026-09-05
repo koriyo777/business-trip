@@ -572,14 +572,13 @@ def web_app() -> None:
     st.caption("PDF에 표시된 이름과 표준 지급명세서에 넣을 실제 이름을 한 줄씩 입력하세요.")
     mapping_text = st.text_area(
         "PDF이름=실제이름",
-        value="코리요=장병순",
         height=100,
-        placeholder="코리요=장병순\n코리순=홍길동",
+        placeholder="PDF이름=실제이름\n코리순=홍길동",
     )
     duty_order_text = st.text_area(
         "사무분장표 순서",
         height=140,
-        placeholder="장병순\n임자영\n김지성\n이재평\n...",
+        placeholder="이름1\n이름2\n이름3\n...",
         help="실제 지급명세서에 표시할 순서대로 실제 이름을 한 줄씩 입력하세요.",
     )
     uploaded = st.file_uploader("결재내역 PDF 업로드", type=["pdf"], accept_multiple_files=False)
