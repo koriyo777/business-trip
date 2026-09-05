@@ -121,8 +121,10 @@ def display_rank(value: Any) -> str:
         ("지방행정주사보", "행정7급"), ("행정주사보", "행정7급"),
         ("지방시설주사", "시설6급"), ("시설주사", "시설6급"),
         ("지방행정주사", "행정6급"), ("행정주사", "행정6급"),
-        ("지방시설서기", "8급"), ("시설서기", "8급"),
-        ("지방행정서기", "8급"), ("행정서기", "8급"),
+        ("지방시설서기보", "시설9급"), ("시설서기보", "시설9급"),
+        ("지방행정서기보", "행정9급"), ("행정서기보", "행정9급"),
+        ("지방시설서기", "시설8급"), ("시설서기", "시설8급"),
+        ("지방행정서기", "행정8급"), ("행정서기", "행정8급"),
     )
     for source, target in replacements:
         if source in normalized:
@@ -142,10 +144,12 @@ def extract_department_and_rank(value: Any) -> tuple[str, str]:
 def outside_destination(value: Any) -> bool:
     """출장지가 화성시 밖의 도시인지 판정한다."""
     text = clean_text(value).replace(" ", "")
-    if not text or "화성" in text:
+    if not text:
         return False
     if any(city in text for city in EXTERNAL_CITY_NAMES):
         return True
+    if "화성" in text:
+        return False
     return any(match != "화성시" for match in re.findall(r"[가-힣]{2,}시", text))
 
 
@@ -194,7 +198,7 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
     if person_index is None or time_index is None or vehicle_index is None:
         raise ValueError("PDF에서 성명, 출장시간, 차량사용여부 열을 찾지 못했습니다.")
     detail: list[dict[str, Any]] = []
-    totals: dict[str, dict[str, Any]] = defaultdict(lambda: {"소속": "", "직급": "", "출장 횟수": 0, "관내 출장 수": 0, "관외 총일수": 0, "관내 차량 수": 0, "관외 차량 수": 0, "4시간 미만 수": 0, "총 출장비": 0})
+    totals: dict[str, dict[str, Any]] = defaultdict(lambda: {"소속": "", "직급": "", "관외 출장지": [], "출장 횟수": 0, "관내 출장 수": 0, "관외 총일수": 0, "관내 차량 수": 0, "관외 차량 수": 0, "4시간 미만 수": 0, "총 출장비": 0})
     previous_person = ""
     for row_number, row in enumerate(rows, start=1):
         values = list(row) + [""] * max(0, len(headers) - len(row))
@@ -204,7 +208,9 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
             time_text = f"{values[start_index]}~{values[end_index]}"
         location = values[location_index] if location_index is not None else "근무지내"
         destination = values[destination_index] if destination_index is not None else ""
-        outside = "지외" in clean_text(location) or "관외" in clean_text(location) or outside_destination(destination)
+        destination_text = clean_text(destination)
+        clear_external_destination = outside_destination(destination_text)
+        outside = "지외" in clean_text(location) or "관외" in clean_text(location) or clear_external_destination
         normalized_person = raw_person.replace(" ", "")
         if normalized_person in {"성명", "소계", "합계", "총계"}:
             continue
@@ -228,7 +234,7 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
             "직급": display_rank(values[rank_index]) if rank_index is not None else rank,
             "출장시간": time_text,
             "출장기간": clean_text(values[3]) if len(values) > 3 else "",
-            "근무지": "근무지외" if outside else clean_text(location) or "근무지내",
+            "근무지": "근무지외" if outside else "근무지내",
             "관외여부": outside,
             "출장일수": days,
             "차량사용여부": clean_text(vehicle) or "미사용",
@@ -238,6 +244,8 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
             totals[person]["소속"] = department or (clean_text(values[department_index]) if department_index is not None else "")
         if not totals[person]["직급"]:
             totals[person]["직급"] = display_rank(values[rank_index]) if rank_index is not None else rank
+        if clear_external_destination and destination_text not in totals[person]["관외 출장지"]:
+            totals[person]["관외 출장지"].append(destination_text)
         totals[person]["출장 횟수"] += 1
         if outside:
             totals[person]["관외 총일수"] += days
@@ -251,6 +259,8 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
         {"성명": person, **data}
         for person, data in sorted(totals.items())
     ]
+    for person in summary:
+        person["비고"] = "관외: " + ", ".join(person.pop("관외 출장지")) if person.get("관외 출장지") else ""
     return detail, summary
 
 
@@ -535,7 +545,8 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         sheet.cell(index, 21).value = person["4시간 미만 수"]
         sheet.cell(index, 22).value = f"=U{row_number}*10000"
         sheet.cell(index, 23).value = f"=L{row_number}*M{row_number}+N{row_number}*O{row_number}+P{row_number}-T{row_number}-V{row_number}"
-        sheet.cell(index, 24).value = f"출장 {person['출장 횟수']}건"
+        note = f" / {person['비고']}" if person.get("비고") else ""
+        sheet.cell(index, 24).value = f"출장 {person['출장 횟수']}건{note}"
         for column in (14, 15, 16):
             sheet.cell(index, column).font = Font(color="FF0000")
         for column in (13, 15, 16, 20, 22, 23):
@@ -548,7 +559,7 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         sheet.cell(total_row, column).border = border
         sheet.cell(total_row, column).alignment = center
         sheet.cell(total_row, column).font = Font(bold=True)
-    sheet.freeze_panes = "F7"
+    sheet.freeze_panes = "E6"
     widths = {"B": 16, "C": 12, "D": 12, "E": 10, "F": 4, "G": 4, "H": 4, "I": 4, "J": 4, "K": 4, "L": 4, "M": 12, "N": 4, "O": 12, "P": 14, "Q": 4, "R": 4, "S": 4, "T": 14, "U": 4, "V": 14, "W": 16, "X": 24, "Y": 12}
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
