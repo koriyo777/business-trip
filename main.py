@@ -31,6 +31,7 @@ OUTSIDE_DAILY_AMOUNT = 25_000
 OUTSIDE_MEAL_AMOUNT = 25_000
 OUTSIDE_VEHICLE_DEDUCTION = 12_500
 EXTERNAL_CITY_NAMES = ("수원", "시흥", "세종", "서울", "용인", "안산", "오산", "평택", "성남", "안양", "군포", "의왕", "과천", "광명", "부천", "인천")
+INTERNAL_DESTINATION_EXCEPTIONS = ("수원대학교", "봉담읍 시민대학")
 
 
 def clean_text(value: Any) -> str:
@@ -145,6 +146,8 @@ def outside_destination(value: Any) -> bool:
     """출장지가 화성시 밖의 도시인지 판정한다."""
     text = clean_text(value).replace(" ", "")
     if not text:
+        return False
+    if any(exception.replace(" ", "") in text for exception in INTERNAL_DESTINATION_EXCEPTIONS):
         return False
     if any(city in text for city in EXTERNAL_CITY_NAMES):
         return True
