@@ -580,7 +580,7 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
     sheet["B4"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
     sheet.freeze_panes = "E7"
     widths = {"A": 1, **{column: 10 for column in "BCDEFGHIJKLMNOPQRSTUVW"}, **{column: 3 for column in "FGHIJK"}, "X": 24, "Y": 12}
-    widths.update({"L": 4, "S": 4, "U": 4})
+    widths.update({"F": 4, "G": 4, "H": 4, "I": 4, "J": 4, "K": 4, "N": 4, "Q": 6, "R": 6, "L": 4, "S": 4, "U": 4})
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
     dark_gray = PatternFill(fill_type="solid", fgColor="666666")
