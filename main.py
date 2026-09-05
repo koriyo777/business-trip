@@ -20,7 +20,7 @@ IGNORE_AMOUNT_WORDS = ("일수", "거리", "번호", "순번", "코드", "연번
 TIME_ALIASES = ("출장시간", "출장 시간", "시간", "출발시간", "출발 시간")
 START_TIME_ALIASES = ("출발시간", "출발 시간", "출발시각", "출발 시각", "출발")
 END_TIME_ALIASES = ("도착시간", "도착 시간", "도착시각", "도착 시각", "도착")
-LOCATION_ALIASES = ("근무지내", "근무지", "출장구분", "출장 유형", "출장유형")
+LOCATION_ALIASES = ("근무지내", "근무지", "출장구분", "출장 유형", "출장유형", "구분")
 DAY_ALIASES = ("출장일수", "총일수", "일수", "기간")
 VEHICLE_ALIASES = ("차량사용여부", "차량 사용 여부", "차량사용", "차량 사용", "차량")
 SHORT_TRIP_AMOUNT = 10_000
@@ -36,6 +36,13 @@ def clean_text(value: Any) -> str:
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value)).strip()
+
+
+def clean_person_name(value: Any) -> str:
+    """성명 아래에 붙은 사번, 숫자, 영문을 제거한다."""
+    text = clean_text(value).split("(", 1)[0]
+    korean_parts = re.findall(r"[가-힣]+", text)
+    return "".join(korean_parts) if korean_parts else re.sub(r"[A-Za-z]", "", text).strip()
 
 
 def number(value: Any) -> float:
@@ -154,7 +161,7 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
     previous_person = ""
     for row_number, row in enumerate(rows, start=1):
         values = list(row) + [""] * max(0, len(headers) - len(row))
-        raw_person = clean_text(values[person_index])
+        raw_person = clean_person_name(values[person_index])
         time_text = clean_text(values[time_index])
         if start_index is not None and end_index is not None and start_index != end_index:
             time_text = f"{values[start_index]}~{values[end_index]}"
@@ -173,7 +180,7 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
         previous_person = person
         hours = duration_hours(time_text)
         vehicle = values[vehicle_index]
-        days = trip_days(values[day_index]) if day_index is not None else trip_days(time_text)
+        days = trip_days(time_text) if outside else (trip_days(values[day_index]) if day_index is not None else 1)
         using_vehicle = vehicle_used(vehicle)
         amount = (days * OUTSIDE_DAILY_AMOUNT + days * OUTSIDE_MEAL_AMOUNT - (days * OUTSIDE_VEHICLE_DEDUCTION if using_vehicle else 0)) if outside else trip_amount(hours, location, vehicle)
         detail.append({
@@ -553,7 +560,7 @@ def web_app() -> None:
     )
     st.title("관내출장비 계산기")
     st.caption("인사랑 결재내역 PDF를 올리면 출장시간과 차량 사용 여부를 기준으로 자동 계산합니다.")
-    st.info("계산 기준: 4시간 미만 1만원 · 4시간 이상 2만원 · 차량 사용 시 1만원 차감")
+    st.info("관내: 4시간 미만 1만원 · 4시간 이상 2만원 · 차량 사용 시 1만원 차감 / 관외: 일비·식비 각 1일 2만5천원 · 관용차 사용 시 1일 1만2천5백원 감액")
     duty_order_text = st.text_area(
         "사무분장표 순서",
         height=140,
