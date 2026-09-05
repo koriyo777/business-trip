@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sys
 import tempfile
+from calendar import monthrange
 from collections import defaultdict
 from copy import copy
 from pathlib import Path
@@ -29,6 +30,7 @@ VEHICLE_DEDUCTION = 10_000
 OUTSIDE_DAILY_AMOUNT = 25_000
 OUTSIDE_MEAL_AMOUNT = 25_000
 OUTSIDE_VEHICLE_DEDUCTION = 12_500
+EXTERNAL_CITY_NAMES = ("수원", "시흥", "세종", "서울", "용인", "안산", "오산", "평택", "성남", "안양", "군포", "의왕", "과천", "광명", "부천", "인천")
 
 
 def clean_text(value: Any) -> str:
@@ -111,18 +113,52 @@ def vehicle_used(value: Any) -> bool:
 
 def display_rank(value: Any) -> str:
     text = clean_text(value)
+    normalized = text.replace(" ", "")
     replacements = (
         ("지방시설사무관", "시설5급"), ("시설사무관", "시설5급"),
         ("지방행정사무관", "행정5급"), ("행정사무관", "행정5급"),
-        ("지방시설주사", "시설6급"), ("시설주사", "시설6급"),
-        ("지방행정주사", "행정6급"), ("행정주사", "행정6급"),
         ("지방시설주사보", "시설7급"), ("시설주사보", "시설7급"),
         ("지방행정주사보", "행정7급"), ("행정주사보", "행정7급"),
+        ("지방시설주사", "시설6급"), ("시설주사", "시설6급"),
+        ("지방행정주사", "행정6급"), ("행정주사", "행정6급"),
+        ("지방시설서기", "시설서기"), ("시설서기", "시설서기"),
+        ("지방행정서기", "행정서기"), ("행정서기", "행정서기"),
     )
     for source, target in replacements:
-        if source in text:
+        if source in normalized:
             return target
     return text
+
+
+def extract_department_and_rank(value: Any) -> tuple[str, str]:
+    """소속/직급이 합쳐진 PDF 셀에서 소속과 직급을 분리한다."""
+    text = clean_text(value).replace(" ", "")
+    department_part = text.split("실", 1)[-1] if "실" in text else text
+    department_match = re.search(r"([가-힣]+과)", department_part)
+    department = department_match.group(1) if department_match else ""
+    return department, display_rank(text)
+
+
+def outside_destination(value: Any) -> bool:
+    """출장지가 화성시 밖의 도시인지 판정한다."""
+    text = clean_text(value).replace(" ", "")
+    if not text or "화성" in text:
+        return False
+    if any(city in text for city in EXTERNAL_CITY_NAMES):
+        return True
+    return any(match != "화성시" for match in re.findall(r"[가-힣]{2,}시", text))
+
+
+def month_day_range(detail: list[dict[str, Any]]) -> str:
+    dates = [
+        (int(year), int(month), int(day))
+        for row in detail
+        for year, month, day in re.findall(r"(\d{4})[-./년]\s*(\d{1,2})[-./월]\s*(\d{1,2})", row.get("출장기간", ""))
+    ]
+    if not dates:
+        return ""
+    year, month, _ = min(dates)
+    return f"{month}.1~{month}.{monthrange(year, month)[1]}"
 
 
 def trip_amount(hours: float | None, location: Any, vehicle: Any) -> int:
@@ -149,6 +185,7 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
     end_index = choose_column(headers, END_TIME_ALIASES)
     vehicle_index = choose_column(headers, VEHICLE_ALIASES)
     location_index = choose_column(headers, LOCATION_ALIASES)
+    destination_index = next((index for index, header in enumerate(headers) if "출장지" in clean_text(header)), None)
     day_index = choose_column(headers, DAY_ALIASES)
     department_index = choose_column(headers, DEPARTMENT_ALIASES)
     rank_index = choose_column(headers, RANK_ALIASES)
@@ -157,7 +194,7 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
     if person_index is None or time_index is None or vehicle_index is None:
         raise ValueError("PDF에서 성명, 출장시간, 차량사용여부 열을 찾지 못했습니다.")
     detail: list[dict[str, Any]] = []
-    totals: dict[str, dict[str, int]] = defaultdict(lambda: {"출장 횟수": 0, "관내 출장 수": 0, "관외 총일수": 0, "관내 차량 수": 0, "관외 차량 수": 0, "4시간 미만 수": 0, "총 출장비": 0})
+    totals: dict[str, dict[str, Any]] = defaultdict(lambda: {"소속": "", "직급": "", "출장 횟수": 0, "관내 출장 수": 0, "관외 총일수": 0, "관내 차량 수": 0, "관외 차량 수": 0, "4시간 미만 수": 0, "총 출장비": 0})
     previous_person = ""
     for row_number, row in enumerate(rows, start=1):
         values = list(row) + [""] * max(0, len(headers) - len(row))
@@ -166,7 +203,8 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
         if start_index is not None and end_index is not None and start_index != end_index:
             time_text = f"{values[start_index]}~{values[end_index]}"
         location = values[location_index] if location_index is not None else "근무지내"
-        outside = "지외" in clean_text(location) or "관외" in clean_text(location)
+        destination = values[destination_index] if destination_index is not None else ""
+        outside = "지외" in clean_text(location) or "관외" in clean_text(location) or outside_destination(destination)
         normalized_person = raw_person.replace(" ", "")
         if normalized_person in {"성명", "소계", "합계", "총계"}:
             continue
@@ -183,17 +221,23 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
         days = trip_days(time_text) if outside else (trip_days(values[day_index]) if day_index is not None else 1)
         using_vehicle = vehicle_used(vehicle)
         amount = (days * OUTSIDE_DAILY_AMOUNT + days * OUTSIDE_MEAL_AMOUNT - (days * OUTSIDE_VEHICLE_DEDUCTION if using_vehicle else 0)) if outside else trip_amount(hours, location, vehicle)
+        department, rank = extract_department_and_rank(values[department_index]) if department_index is not None else ("", "")
         detail.append({
             "성명": person,
-            "소속": clean_text(values[department_index]) if department_index is not None else "",
-            "직급": display_rank(values[rank_index]) if rank_index is not None else "",
+            "소속": department or (clean_text(values[department_index]) if department_index is not None else ""),
+            "직급": display_rank(values[rank_index]) if rank_index is not None else rank,
             "출장시간": time_text,
-            "근무지": clean_text(location) or "근무지내",
+            "출장기간": clean_text(values[3]) if len(values) > 3 else "",
+            "근무지": "근무지외" if outside else clean_text(location) or "근무지내",
             "관외여부": outside,
             "출장일수": days,
             "차량사용여부": clean_text(vehicle) or "미사용",
             "적용금액": amount,
         })
+        if not totals[person]["소속"]:
+            totals[person]["소속"] = department or (clean_text(values[department_index]) if department_index is not None else "")
+        if not totals[person]["직급"]:
+            totals[person]["직급"] = display_rank(values[rank_index]) if rank_index is not None else rank
         totals[person]["출장 횟수"] += 1
         if outside:
             totals[person]["관외 총일수"] += days
@@ -480,6 +524,7 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         sheet.cell(index, 2).value = person.get("소속", "")
         sheet.cell(index, 3).value = person.get("직급", "")
         sheet.cell(index, 4).value = person["성명"]
+        sheet.cell(index, 5).value = month_day_range(detail)
         sheet.cell(index, 12).value = person["관내 출장 수"]
         sheet.cell(index, 13).value = f"=IF(L{row_number}>0,20000,0)"
         sheet.cell(index, 14).value = person["관외 총일수"]
