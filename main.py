@@ -237,6 +237,7 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
             "직급": display_rank(values[rank_index]) if rank_index is not None else rank,
             "출장시간": time_text,
             "출장기간": clean_text(values[3]) if len(values) > 3 else "",
+            "출장지": destination_text,
             "근무지": "근무지외" if outside else "근무지내",
             "관외여부": outside,
             "출장일수": days,
@@ -441,17 +442,55 @@ def summarize_mapped_detail(detail: list[dict[str, Any]]) -> list[dict[str, Any]
     for row in detail:
         person = row["성명"]
         if person not in totals:
-            totals[person] = {"소속": row.get("소속", ""), "직급": row.get("직급", ""), "출장 횟수": 0, "관내 출장 수": 0, "관외 총일수": 0, "관내 차량 수": 0, "관외 차량 수": 0, "4시간 미만 수": 0, "총 출장비": 0}
+            totals[person] = {"소속": row.get("소속", ""), "직급": row.get("직급", ""), "비고": "", "출장 횟수": 0, "관내 출장 수": 0, "관외 총일수": 0, "관내 차량 수": 0, "관외 차량 수": 0, "4시간 미만 수": 0, "관내 일비": 0, "관외 일비": 0, "식비": 0, "숙박비": 0, "교통비": 0, "관내 차량 감액": 0, "관외 차량 감액": 0, "4시간 미만 감액": 0, "총 출장비": 0}
         totals[person]["출장 횟수"] += 1
-        totals[person]["총 출장비"] += int(row["적용금액"])
+        totals[person]["총 출장비"] += int(number(row.get("적용금액", 0)))
+        totals[person]["숙박비"] += int(number(row.get("숙박비", 0)))
+        totals[person]["교통비"] += int(number(row.get("교통비", 0)))
         if row.get("관외여부"):
             totals[person]["관외 총일수"] += int(row.get("출장일수", 1))
             totals[person]["관외 차량 수"] += int(vehicle_used(row["차량사용여부"]))
+            destination = clean_text(row.get("출장지", ""))
+            if destination and destination not in totals[person]["비고"]:
+                totals[person]["비고"] = f"관외: {destination}" if not totals[person]["비고"] else f"{totals[person]['비고']}, {destination}"
+            totals[person]["관외 일비"] += int(number(row.get("일비", 0)))
+            totals[person]["식비"] += int(number(row.get("식비", 0)))
+            totals[person]["관외 차량 감액"] += int(number(row.get("차량감액", 0)))
         else:
             totals[person]["관내 출장 수"] += 1
             totals[person]["관내 차량 수"] += int(vehicle_used(row["차량사용여부"]))
             totals[person]["4시간 미만 수"] += int((duration_hours(row["출장시간"]) or 0) < 4)
+            totals[person]["관내 일비"] += int(number(row.get("일비", 0)))
+            totals[person]["관내 차량 감액"] += int(number(row.get("차량감액", 0)))
+            totals[person]["4시간 미만 감액"] += int(number(row.get("4시간미만 감액", 0)))
     return [{"성명": person, **data} for person, data in totals.items()]
+
+
+def prepare_editable_detail(detail: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    editable: list[dict[str, Any]] = []
+    for source in detail:
+        row = dict(source)
+        outside = bool(row.get("관외여부"))
+        vehicle_deduction = (OUTSIDE_VEHICLE_DEDUCTION if outside else VEHICLE_DEDUCTION) if vehicle_used(row.get("차량사용여부")) else 0
+        base_amount = OUTSIDE_DAILY_AMOUNT * int(row.get("출장일수", 1)) if outside else (LONG_TRIP_AMOUNT if (duration_hours(row.get("출장시간")) or 0) >= 4 else SHORT_TRIP_AMOUNT)
+        row["일비"] = base_amount
+        row["식비"] = OUTSIDE_MEAL_AMOUNT * int(row.get("출장일수", 1)) if outside else 0
+        row["숙박비"] = 0
+        row["교통비"] = 0
+        row["차량감액"] = vehicle_deduction
+        row["4시간미만 감액"] = 0
+        row["적용금액"] = base_amount + row["식비"] - vehicle_deduction
+        row["확인"] = ""
+        editable.append(row)
+    return editable
+
+
+def apply_detail_edits(detail: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in detail:
+        for field in ("일비", "식비", "숙박비", "교통비", "차량감액", "4시간미만 감액"):
+            row[field] = int(number(row.get(field, 0)))
+        row["적용금액"] = row["일비"] + row["식비"] + row["숙박비"] + row["교통비"] - row["차량감액"] - row["4시간미만 감액"]
+    return detail
 
 
 def order_summary(summary: list[dict[str, Any]], order_text: str) -> list[dict[str, Any]]:
@@ -472,7 +511,7 @@ def order_summary(summary: list[dict[str, Any]], order_text: str) -> list[dict[s
     return ordered
 
 
-def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: list[dict[str, Any]], template: Path) -> None:
+def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: list[dict[str, Any]], template: Path, confirmer: str = "") -> None:
     """시 표준 지급명세서의 관내 시트 구성으로 XLSX를 생성한다."""
     from openpyxl import Workbook, load_workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -542,17 +581,20 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         sheet.cell(index, 4).value = person["성명"]
         sheet.cell(index, 5).value = month_day_range(detail)
         sheet.cell(index, 12).value = person["관내 출장 수"]
-        sheet.cell(index, 13).value = f"=IF(L{row_number}>0,20000,0)"
+        sheet.cell(index, 13).value = round(person["관내 일비"] / person["관내 출장 수"]) if person["관내 출장 수"] else 0
         sheet.cell(index, 14).value = person["관외 총일수"]
-        sheet.cell(index, 15).value = f"=IF(N{row_number}>0,25000,0)"
-        sheet.cell(index, 16).value = f"=N{row_number}*25000"
+        sheet.cell(index, 15).value = round(person["관외 일비"] / person["관외 총일수"]) if person["관외 총일수"] else 0
+        sheet.cell(index, 16).value = person["식비"]
+        sheet.cell(index, 17).value = person["숙박비"]
+        sheet.cell(index, 18).value = person["교통비"]
         sheet.cell(index, 19).value = person["관내 차량 수"] + person["관외 차량 수"]
-        sheet.cell(index, 20).value = f"={person['관내 차량 수']}*10000+{person['관외 차량 수']}*12500"
+        sheet.cell(index, 20).value = person["관내 차량 감액"] + person["관외 차량 감액"]
         sheet.cell(index, 21).value = person["4시간 미만 수"]
-        sheet.cell(index, 22).value = f"=U{row_number}*10000"
-        sheet.cell(index, 23).value = f"=L{row_number}*M{row_number}+N{row_number}*O{row_number}+P{row_number}-T{row_number}-V{row_number}"
+        sheet.cell(index, 22).value = person["4시간 미만 감액"]
+        sheet.cell(index, 23).value = f"=L{row_number}*M{row_number}+N{row_number}*O{row_number}+P{row_number}+Q{row_number}+R{row_number}-T{row_number}-V{row_number}"
         note = f" / {person['비고']}" if person.get("비고") else ""
         sheet.cell(index, 24).value = f"출장 {person['출장 횟수']}건{note}"
+        sheet.cell(index, 25).value = confirmer
         for column in (14, 15, 16):
             sheet.cell(index, column).font = Font(color="FF0000")
         if any(rank in person.get("직급", "") for rank in ("5급", "6급")):
@@ -641,7 +683,6 @@ def web_app() -> None:
         return
 
     source_path: Path | None = None
-    output_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as source_file:
             source_file.write(uploaded.getvalue())
@@ -651,10 +692,6 @@ def web_app() -> None:
         summary = order_summary(summary, duty_order_text)
         if not summary:
             raise ValueError("집계할 출장 행이 없습니다.")
-        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as output_file:
-            output_path = Path(output_file.name)
-        template = Path(__file__).with_name("7월 여비지급명세서.xls")
-        save_standard_result(output_path, summary, detail, template)
     except Exception as error:
         st.error(str(error))
         st.caption("스캔 PDF라면 Tesseract OCR 한국어 언어팩이 설치되어 있어야 합니다.")
@@ -663,17 +700,53 @@ def web_app() -> None:
         if source_path:
             source_path.unlink(missing_ok=True)
 
-    total_count = sum(row["출장 횟수"] for row in summary)
-    total_amount = sum(row["총 출장비"] for row in summary)
+    st.subheader("사람별 집계")
+    editable_detail = prepare_editable_detail(detail)
+    edit_columns = [
+        "성명", "소속", "직급", "출장시간", "출장지", "근무지", "출장일수", "차량사용여부",
+        "일비", "식비", "숙박비", "교통비", "차량감액", "4시간미만 감액", "적용금액", "확인",
+    ]
+    st.dataframe(summary, width="stretch", hide_index=True)
+    st.subheader("출장별 계산 내역 수정")
+    st.caption("관외 출장의 식비·숙박비·교통비 등 금액을 수정한 뒤 확인자 이름을 입력하고 저장하세요.")
+    import pandas as pd
+
+    edited_frame = st.data_editor(
+        pd.DataFrame(editable_detail)[edit_columns],
+        width="stretch",
+        hide_index=True,
+        disabled=["성명", "소속", "직급", "출장시간", "출장지", "근무지", "출장일수", "차량사용여부", "적용금액", "확인"],
+        column_config={
+            "일비": st.column_config.NumberColumn("일비", min_value=0, step=1000, format="%d원"),
+            "식비": st.column_config.NumberColumn("식비", min_value=0, step=1000, format="%d원"),
+            "숙박비": st.column_config.NumberColumn("숙박비", min_value=0, step=1000, format="%d원"),
+            "교통비": st.column_config.NumberColumn("교통비", min_value=0, step=1000, format="%d원"),
+            "차량감액": st.column_config.NumberColumn("차량감액", min_value=0, step=1000, format="%d원"),
+            "4시간미만 감액": st.column_config.NumberColumn("4시간미만 감액", min_value=0, step=1000, format="%d원"),
+        },
+        key="trip_detail_editor",
+    )
+    edited_detail = apply_detail_edits(edited_frame.to_dict("records"))
+    edited_summary = order_summary(summarize_mapped_detail(edited_detail), duty_order_text)
+    total_count = sum(row["출장 횟수"] for row in edited_summary)
+    total_amount = sum(row["총 출장비"] for row in edited_summary)
     first, second, third = st.columns(3)
     first.metric("전체 출장 건수", f"{total_count:,}건")
     second.metric("전체 출장비", f"{total_amount:,}원")
-    third.metric("출장자 수", f"{len(summary):,}명")
-    st.subheader("사람별 집계")
-    st.dataframe(summary, width="stretch", hide_index=True)
-    st.subheader("출장별 계산 내역")
-    st.dataframe(detail, width="stretch", hide_index=True)
-    if output_path:
+    third.metric("출장자 수", f"{len(edited_summary):,}명")
+    st.subheader("수정 후 사람별 집계")
+    st.dataframe(edited_summary, width="stretch", hide_index=True)
+    confirmer = st.text_input("확인자 이름", placeholder="본인 이름을 입력하세요")
+    if st.button("저장 및 엑셀 다운로드", type="primary", width="stretch"):
+        if not confirmer.strip():
+            st.error("확인자 이름을 입력해 주세요.")
+            return
+        output_path: Path | None = None
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as output_file:
+            output_path = Path(output_file.name)
+        template = Path(__file__).with_name("7월 여비지급명세서.xls")
+        save_standard_result(output_path, edited_summary, edited_detail, template, confirmer.strip())
+        st.success(f"{confirmer.strip()}님의 확인 내용이 저장되었습니다.")
         st.download_button(
             "엑셀 다운로드",
             data=output_path.read_bytes(),
