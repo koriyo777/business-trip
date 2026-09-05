@@ -526,6 +526,9 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
             cell.font = Font(bold=True)
             cell.alignment = center
             cell.border = border
+    for column in (5, 16, 17, 18, 23):
+        sheet.cell(5, column).border = Border(left=thin, right=thin, top=thin)
+        sheet.cell(6, column).border = Border(left=thin, right=thin, bottom=thin)
     sheet.row_dimensions[5].height = 38
     sheet.row_dimensions[6].height = 58
     for row_number in range(7, max(25, 7 + len(summary))):
@@ -552,6 +555,9 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         sheet.cell(index, 24).value = f"출장 {person['출장 횟수']}건{note}"
         for column in (14, 15, 16):
             sheet.cell(index, column).font = Font(color="FF0000")
+        if any(rank in person.get("직급", "") for rank in ("5급", "6급")):
+            sheet.cell(index, 3).font = Font(bold=True)
+            sheet.cell(index, 4).font = Font(bold=True)
         for column in (13, 15, 16, 20, 22, 23):
             sheet.cell(index, column).number_format = "#,##0"
     total_row = 25 if len(summary) <= 18 else 7 + len(summary)
@@ -562,6 +568,9 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         sheet.cell(total_row, column).border = border
         sheet.cell(total_row, column).alignment = center
         sheet.cell(total_row, column).font = Font(bold=True)
+    for row in sheet.iter_rows(min_row=1, max_row=total_row, min_col=2, max_col=25):
+        for cell in row:
+            cell.alignment = center
     sheet.freeze_panes = "E6"
     widths = {"B": 16, "C": 12, "D": 12, "E": 10, "F": 4, "G": 4, "H": 4, "I": 4, "J": 4, "K": 4, "L": 4, "M": 12, "N": 4, "O": 12, "P": 14, "Q": 4, "R": 4, "S": 4, "T": 14, "U": 4, "V": 14, "W": 16, "X": 24, "Y": 12}
     for column, width in widths.items():
