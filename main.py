@@ -499,9 +499,11 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
     sheet["B1"] = title
     sheet["B1"].font = Font(name="맑은 고딕", size=24, bold=True)
     sheet["B1"].alignment = center
+    sheet.merge_cells("B4:Y4")
     sheet.merge_cells("B3:Y3")
     sheet["B3"] = "* 화성시 재무회계 규칙 제21조5항 예산집행품의 생략[직무수행경비,공공요금,제세공과금,인건비,여비]"
     sheet["B4"] = "(별지서식 제47호 서식)"
+    sheet["B4"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
     merges = ("B5:D5", "E5:E6", "F5:H5", "I5:K5", "L5:M5", "N5:O5", "P5:P6", "Q5:Q6", "R5:R6", "S5:T5", "U5:V5", "W5:W6", "X5:X6", "Y5:Y6")
     for merge in merges:
         sheet.merge_cells(merge)
@@ -572,8 +574,9 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         for cell in row:
             cell.alignment = center
     sheet["B3"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    sheet["B4"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
     sheet.freeze_panes = "E6"
-    widths = {"A": 1, **{column: 10 for column in "BCDEFGHIJKLMNOPQRSTUVW"}, "X": 24, "Y": 12}
+    widths = {"A": 1, **{column: 10 for column in "BCDEFGHIJKLMNOPQRSTUVW"}, **{column: 3 for column in "FGHIJK"}, "X": 24, "Y": 12}
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
     dark_gray = PatternFill(fill_type="solid", fgColor="666666")
