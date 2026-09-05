@@ -497,7 +497,7 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     sheet.merge_cells("B1:Y1")
     sheet["B1"] = title
-    sheet["B1"].font = Font(size=14, bold=True)
+    sheet["B1"].font = Font(name="맑은 고딕", size=24, bold=True)
     sheet["B1"].alignment = center
     sheet.merge_cells("B3:Y3")
     sheet["B3"] = "* 화성시 재무회계 규칙 제21조5항 예산집행품의 생략[직무수행경비,공공요금,제세공과금,인건비,여비]"
@@ -571,10 +571,14 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
     for row in sheet.iter_rows(min_row=1, max_row=total_row, min_col=2, max_col=25):
         for cell in row:
             cell.alignment = center
+    sheet["B3"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
     sheet.freeze_panes = "E6"
-    widths = {"B": 16, "C": 12, "D": 12, "E": 10, "F": 4, "G": 4, "H": 4, "I": 4, "J": 4, "K": 4, "L": 4, "M": 12, "N": 4, "O": 12, "P": 14, "Q": 4, "R": 4, "S": 4, "T": 14, "U": 4, "V": 14, "W": 16, "X": 24, "Y": 12}
+    widths = {"A": 1, **{column: 10 for column in "BCDEFGHIJKLMNOPQRSTUVW"}, "X": 24, "Y": 12}
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
+    dark_gray = PatternFill(fill_type="solid", fgColor="666666")
+    for row in range(1, total_row + 1):
+        sheet.cell(row, 1).fill = dark_gray
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
     workbook.calculation.calcMode = "auto"
