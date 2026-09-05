@@ -499,6 +499,7 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
     sheet["B1"] = title
     sheet["B1"].font = Font(name="맑은 고딕", size=24, bold=True)
     sheet["B1"].alignment = center
+    sheet.row_dimensions[1].height = 34
     sheet.merge_cells("B4:Y4")
     sheet.merge_cells("B3:Y3")
     sheet["B3"] = "* 화성시 재무회계 규칙 제21조5항 예산집행품의 생략[직무수행경비,공공요금,제세공과금,인건비,여비]"
@@ -555,7 +556,9 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
         sheet.cell(index, 23).value = f"=L{row_number}*M{row_number}+N{row_number}*O{row_number}+P{row_number}-T{row_number}-V{row_number}"
         note = f" / {person['비고']}" if person.get("비고") else ""
         sheet.cell(index, 24).value = f"출장 {person['출장 횟수']}건{note}"
-        for column in (14, 15, 16):
+        for column in (14, 15):
+            sheet.cell(index, column).font = Font(color="000000")
+        for column in (16,):
             sheet.cell(index, column).font = Font(color="FF0000")
         if any(rank in person.get("직급", "") for rank in ("5급", "6급")):
             sheet.cell(index, 3).font = Font(bold=True)
@@ -575,8 +578,9 @@ def save_standard_result(output: Path, summary: list[dict[str, Any]], detail: li
             cell.alignment = center
     sheet["B3"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
     sheet["B4"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=False)
-    sheet.freeze_panes = "E6"
+    sheet.freeze_panes = "E7"
     widths = {"A": 1, **{column: 10 for column in "BCDEFGHIJKLMNOPQRSTUVW"}, **{column: 3 for column in "FGHIJK"}, "X": 24, "Y": 12}
+    widths.update({"L": 4, "S": 4, "U": 4})
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
     dark_gray = PatternFill(fill_type="solid", fgColor="666666")
