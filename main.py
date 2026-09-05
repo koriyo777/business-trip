@@ -154,17 +154,25 @@ def summarize_trip_rows(headers: list[str], rows: list[list[Any]]) -> tuple[list
     previous_person = ""
     for row_number, row in enumerate(rows, start=1):
         values = list(row) + [""] * max(0, len(headers) - len(row))
-        person = clean_text(values[person_index]) or previous_person
-        if not person or person in {"합계", "총계"}:
-            continue
-        previous_person = person
+        raw_person = clean_text(values[person_index])
         time_text = clean_text(values[time_index])
         if start_index is not None and end_index is not None and start_index != end_index:
             time_text = f"{values[start_index]}~{values[end_index]}"
-        hours = duration_hours(time_text)
         location = values[location_index] if location_index is not None else "근무지내"
-        vehicle = values[vehicle_index]
         outside = "지외" in clean_text(location) or "관외" in clean_text(location)
+        normalized_person = raw_person.replace(" ", "")
+        if normalized_person in {"성명", "소계", "합계", "총계"}:
+            continue
+        if not raw_person and not time_text:
+            continue
+        if duration_hours(time_text) is None and not outside:
+            continue
+        person = raw_person or previous_person
+        if not person:
+            continue
+        previous_person = person
+        hours = duration_hours(time_text)
+        vehicle = values[vehicle_index]
         days = trip_days(values[day_index]) if day_index is not None else trip_days(time_text)
         using_vehicle = vehicle_used(vehicle)
         amount = (days * OUTSIDE_DAILY_AMOUNT + days * OUTSIDE_MEAL_AMOUNT - (days * OUTSIDE_VEHICLE_DEDUCTION if using_vehicle else 0)) if outside else trip_amount(hours, location, vehicle)
@@ -364,28 +372,6 @@ def summarize(headers: list[str], rows: list[list[Any]]) -> tuple[list[dict[str,
     return detail, summary
 
 
-def parse_name_mapping(text: str) -> dict[str, str]:
-    """웹 입력 'PDF이름=실제이름' 목록을 읽는다."""
-    mapping: dict[str, str] = {}
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        separator = "=" if "=" in line else ":" if ":" in line else None
-        if separator:
-            source, target = (part.strip() for part in line.split(separator, 1))
-            if source and target:
-                mapping[source] = target
-    return mapping
-
-
-def apply_name_mapping(detail: list[dict[str, Any]], mapping: dict[str, str]) -> list[dict[str, Any]]:
-    """PDF 이름을 실제 이름으로 바꾸고 같은 실제 이름의 출장 건을 합친다."""
-    for row in detail:
-        row["성명"] = mapping.get(row["성명"], row["성명"])
-    return detail
-
-
 def summarize_mapped_detail(detail: list[dict[str, Any]]) -> list[dict[str, Any]]:
     totals: dict[str, dict[str, Any]] = {}
     for row in detail:
@@ -568,13 +554,6 @@ def web_app() -> None:
     st.title("관내출장비 계산기")
     st.caption("인사랑 결재내역 PDF를 올리면 출장시간과 차량 사용 여부를 기준으로 자동 계산합니다.")
     st.info("계산 기준: 4시간 미만 1만원 · 4시간 이상 2만원 · 차량 사용 시 1만원 차감")
-    st.subheader("이름 연결")
-    st.caption("PDF에 표시된 이름과 표준 지급명세서에 넣을 실제 이름을 한 줄씩 입력하세요.")
-    mapping_text = st.text_area(
-        "PDF이름=실제이름",
-        height=100,
-        placeholder="PDF이름=실제이름\n코리순=홍길동",
-    )
     duty_order_text = st.text_area(
         "사무분장표 순서",
         height=140,
@@ -594,8 +573,6 @@ def web_app() -> None:
             source_path = Path(source_file.name)
         headers, rows = load_rows(source_path)
         detail, summary = summarize(headers, rows)
-        detail = apply_name_mapping(detail, parse_name_mapping(mapping_text))
-        summary = summarize_mapped_detail(detail)
         summary = order_summary(summary, duty_order_text)
         if not summary:
             raise ValueError("집계할 출장 행이 없습니다.")
